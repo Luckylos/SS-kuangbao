@@ -9,11 +9,12 @@ const PROXY_PORT = 443;
 
 const WS_HI = 32768;
 const WS_LO = 16384;
-const MERGE_MAX = 16384;
+const MERGE_MAX = 12288;
 const Q_SIZE = 32;
 const Q_MASK = 31;
 const QB_MAX = 262144;
-const TIMEOUT = 2000;
+const TIMEOUT = 1200;
+const FAST_THRESHOLD = 4096;
 
 const DEC = new TextDecoder();
 const EMPTY = new Uint8Array(0);
@@ -205,8 +206,9 @@ Uplink.prototype.push = function(chunk) {
   this.qb = newQb;
   
   const qsize = ((qt - qh + Q_SIZE) & Q_MASK) | 0;
+  const isEmpty = qsize === 1;
   
-  if (!this.lock && (len > 8192 || newQb >= MERGE_MAX || qsize >= 15)) {
+  if (!this.lock && (isEmpty || len > FAST_THRESHOLD || newQb >= MERGE_MAX || qsize >= 10)) {
     this.drain();
   } else if (!this.scheduled) {
     this.scheduled = true;
@@ -233,7 +235,7 @@ Uplink.prototype.drain = async function() {
     let bc = 0;
     let bb = 0;
     
-    while (bc < 16 && bc < qsize) {
+    while (bc < 14 && bc < qsize) {
       const idx = (qh + bc) & Q_MASK;
       const clen = q[idx].length | 0;
       if (bb > 0 && (bb + clen) > MERGE_MAX) break;
@@ -297,8 +299,8 @@ Downlink.prototype.run = async function() {
               res();
             } else {
               cnt = (cnt + 1) | 0;
-              if (cnt > 20) {
-                setTimeout(res, 1);
+              if (cnt > 15) {
+                setTimeout(res, 0);
               } else {
                 queueMicrotask(chk);
               }
@@ -310,7 +312,7 @@ Downlink.prototype.run = async function() {
       }
       
       buf = ws.bufferedAmount | 0;
-      const qt = (buf < WS_LO ? 8 : 2) | 0;
+      const qt = (buf < WS_LO ? 10 : 3) | 0;
       
       for (let i = 0; i < qt && !s.dead; i = (i + 1) | 0) {
         const {done, value} = await r.read();
